@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Lập kế hoạch phòng khám / bệnh viện</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+  <style>
+    html { -webkit-tap-highlight-color: transparent; }
+    body { overscroll-behavior-y: contain; }
+    .safe-bottom { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+    .drag-handle { touch-action: none; }
+    .selected-card.sortable-ghost { opacity: .45; transform: scale(.98); }
+    .selected-card.sortable-chosen { box-shadow: 0 12px 30px rgba(15, 23, 42, .18); }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-900">
+  <main class="mx-auto flex min-h-screen w-full max-w-md flex-col bg-white shadow-xl">
+    <header class="sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-4 pb-3 pt-4 backdrop-blur">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <h1 class="text-lg font-bold leading-tight">Lập kế hoạch đi làm</h1>
+          <p class="mt-1 text-xs text-slate-500">Chọn phòng khám / bệnh viện, kéo-thả để sắp xếp, rồi xuất Excel.</p>
+        </div>
+        <button id="clearAllBtn" type="button" class="rounded-full border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600 active:bg-red-50">Xóa hết</button>
+      </div>
+
+      <label class="mt-3 block text-xs font-semibold text-slate-600" for="fileName">Tên file Excel</label>
+      <input id="fileName" class="mt-1 w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-medium outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100" value="Tối ưu lộ trình Trâm TV15.16.17 T7" />
+
+      <label class="mt-3 block text-xs font-semibold text-slate-600" for="searchInput">Tìm kiếm nhanh</label>
+      <div class="relative mt-1">
+        <input id="searchInput" class="w-full rounded-2xl border border-slate-300 bg-slate-50 px-10 py-3 text-base outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-100" placeholder="Nhập mã hoặc tên..." autocomplete="off" />
+        <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔎</span>
+        <button id="resetSearchBtn" type="button" class="absolute right-2 top-1/2 hidden -translate-y-1/2 rounded-full bg-slate-200 px-2 py-1 text-xs font-bold text-slate-600">×</button>
+      </div>
+    </header>
+
+    <section class="grid gap-3 p-4">
+      <div class="rounded-3xl border border-blue-100 bg-blue-50 p-3">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-wide text-blue-700">Đã chọn</p>
+            <p class="text-sm text-blue-950"><span id="selectedCount" class="font-bold">0</span> địa điểm trong lộ trình</p>
+          </div>
+          <button id="exportBtnTop" type="button" class="rounded-2xl bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow-sm active:bg-blue-700">Xuất Excel</button>
+        </div>
+      </div>
+
+      <div>
+        <div class="mb-2 flex items-center justify-between">
+          <h2 class="text-sm font-bold text-slate-800">Lộ trình</h2>
+          <p class="text-xs text-slate-500">Giữ biểu tượng ☰ để kéo</p>
+        </div>
+        <div id="selectedList" class="grid gap-2"></div>
+        <div id="emptySelected" class="rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-sm text-slate-500">Chưa có địa điểm nào. Bấm “Thêm” ở danh sách bên dưới.</div>
+      </div>
+
+      <div>
+        <div class="mb-2 flex items-center justify-between">
+          <h2 class="text-sm font-bold text-slate-800">Danh sách Sheet1</h2>
+          <p id="resultCount" class="text-xs text-slate-500"></p>
+        </div>
+        <div id="clinicList" class="grid gap-2"></div>
+      </div>
+    </section>
+
+    <div class="sticky bottom-0 z-20 mt-auto border-t border-slate-200 bg-white/95 px-4 py-3 safe-bottom backdrop-blur">
+      <button id="exportBtnBottom" type="button" class="w-full rounded-2xl bg-emerald-600 px-4 py-3 text-base font-bold text-white shadow-lg shadow-emerald-600/20 active:bg-emerald-700">Xuất file Excel .xlsx</button>
+      <p id="statusText" class="mt-2 text-center text-xs text-slate-500">File xuất ra có sheet <b>SheetJS</b> và giữ cấu trúc cột mẫu.</p>
+    </div>
+  </main>
+
+<script>
+const SOURCE_ROWS = [
+  { id: "B00661", name: "Bệnh viện đa khoa tỉnh Trà Vinh" },
+  { id: "B00876", name: "Bệnh viện đa khoa Minh Tâm Trà Vinh" },
+  { id: "P20693", name: "Phòng khám BSCKI Thế Vũ" },
+  { id: "P12272", name: "Phòng Khám Nội Nhi BS Mã Hoàng Anh Kiệt" },
+  { id: "P12312", name: "Phòng khám nội nhi bác sĩ Nguyễn Văn Tuấn Kiệt" },
+  { id: "T00360", name: "Trường Đại học Trà Vinh" },
+  { id: "B00876", name: "Bệnh viện đa khoa Minh Tâm Trà Vinh" },
+  { id: "P11010", name: "Phòng khám chuyên khoa II Bác sĩ Võ Bích Nga" },
+  { id: "P19253", name: "Phòng khám Chuyên khoa Cơ xương khớp BS Nhân - BS Chi" },
+  { id: "P18334", name: "Phòng khám Tai-Mũi-Họng BSCKI Lê Duy Anh" },
+  { id: "C15809", name: "CÔNG TY CỔ PHẦN BỆNH VIỆN MẮT SÀI GÒN TRÀ VINH" },
+  { id: "B00889", name: "Bệnh viện Quân dân y tỉnh Trà Vinh" },
+  { id: "P18989", name: "Phòng khám Cơ xương khớp BS Dương Huy Khương" },
+  { id: "P01854", name: "Phòng Khám Bác sĩ Lê Đình An" },
+  { id: "P13296", name: "Phòng khám Nội - Nhi Tiến sĩ - Bác Sĩ Lê Minh Dũng" },
+  { id: "P10020", name: "Phòng khám chuyên khoa nhi BS Thạch Chí Công" },
+  { id: "P16088", name: "Phòng khám BS CKI Kiên Kim Toàn" },
+  { id: "P22206 ", name: "Phòng khám bác sĩ Nguyễn Văn Phi Long" },
+  { id: "B00889", name: "Bệnh viện Quân dân y tỉnh Trà Vinh" },
+  { id: "P11864", name: "Phòng khám chuyên khoa nội nhi BSCKI Trầm Thị Tuyết Sương" },
+  { id: "N01615", name: "Nhà Thuốc Gia Phúc -Phòng Khám Bác sĩ Sáu" },
+  { id: "P13153", name: "Phòng khám bác sĩ Lâm Văn Được" },
+  { id: "P21158", name: "Phòng khám chuyên khoa nội nhi BSCKI Hạnh Dung" },
+  { id: "P21491", name: "Phòng khám nội nhi Bs Quý" },
+  { id: "P10070", name: "Phòng khám BS Thạch Xuân" },
+  { id: "Q06457", name: "Hộ Kinh Doanh Lâm Văn Đầy" },
+  { id: "P20734", name: "Phòng Khám Bác sĩ Phạm Văn Triều" },
+  { id: "P20594", name: "Phòng khám BS Đỗ Thị Huỳnh Mai" },
+  { id: "P02034", name: "Phòng Khám Nội Nhi BS Ngọc" },
+  { id: "P10488", name: "Phòng khám chuyên khoa nội - siêu âm BS Từ Thanh Tùng" }
+];
+
+const $ = (id) => document.getElementById(id);
+const state = {
+  selected: JSON.parse(localStorage.getItem('routeSelectedV1') || '[]'),
+  query: ''
+};
+
+const UNIQUE_ROWS = SOURCE_ROWS.reduce((acc, item) => {
+  const key = `${item.id.trim()}|${item.name}`;
+  if (!acc.map.has(key)) {
+    acc.map.set(key, true);
+    acc.rows.push({ id: item.id.trim(), name: item.name });
+  }
+  return acc;
+}, { map: new Map(), rows: [] }).rows;
+
+function normalizeText(text) {
+  return String(text || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isSelected(row) {
+  return state.selected.some(item => item.id === row.id && item.name === row.name);
+}
+
+function saveSelected() {
+  localStorage.setItem('routeSelectedV1', JSON.stringify(state.selected));
+}
+
+function renderClinics() {
+  const container = $('clinicList');
+  const query = normalizeText(state.query);
+  const filtered = UNIQUE_ROWS.filter(row => {
+    if (!query) return true;
+    return normalizeText(`${row.id} ${row.name}`).includes(query);
+  });
+
+  $('resultCount').textContent = `${filtered.length}/${UNIQUE_ROWS.length}`;
+  container.innerHTML = filtered.map(row => {
+    const selected = isSelected(row);
+    return `
+      <article class="rounded-3xl border ${selected ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-white'} p-3 shadow-sm">
+        <div class="flex items-start gap-3">
+          <div class="min-w-0 flex-1">
+            <p class="text-xs font-bold text-slate-500">${escapeHtml(row.id)}</p>
+            <h3 class="mt-0.5 text-sm font-semibold leading-snug text-slate-900">${highlight(row.name, state.query)}</h3>
+          </div>
+          <button type="button" data-add="${escapeAttr(row.id)}|||${escapeAttr(row.name)}" class="shrink-0 rounded-2xl ${selected ? 'bg-slate-200 text-slate-500' : 'bg-blue-600 text-white'} px-3 py-2 text-sm font-bold active:scale-95" ${selected ? 'disabled' : ''}>${selected ? 'Đã thêm' : 'Thêm'}</button>
+        </div>
+      </article>`;
+  }).join('') || `<div class="rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-sm text-slate-500">Không tìm thấy địa điểm phù hợp.</div>`;
+}
+
+function renderSelected() {
+  const container = $('selectedList');
+  $('selectedCount').textContent = state.selected.length;
+  $('emptySelected').classList.toggle('hidden', state.selected.length > 0);
+  container.innerHTML = state.selected.map((row, index) => `
+    <article class="selected-card rounded-3xl border border-slate-200 bg-white p-3 shadow-sm" data-index="${index}">
+      <div class="flex items-center gap-3">
+        <button type="button" class="drag-handle rounded-2xl bg-slate-100 px-3 py-3 text-lg font-black text-slate-500 active:bg-slate-200" aria-label="Kéo để đổi thứ tự">☰</button>
+        <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-blue-100 text-sm font-black text-blue-700">${index + 1}</div>
+        <div class="min-w-0 flex-1">
+          <p class="text-xs font-bold text-slate-500">${escapeHtml(row.id)}</p>
+          <h3 class="text-sm font-semibold leading-snug text-slate-900">${escapeHtml(row.name)}</h3>
+        </div>
+        <button type="button" data-remove="${index}" class="rounded-2xl bg-red-50 px-3 py-2 text-sm font-bold text-red-600 active:bg-red-100">Xóa</button>
+      </div>
+    </article>
+  `).join('');
+  saveSelected();
+  renderClinics();
+}
+
+function addRow(row) {
+  if (!isSelected(row)) {
+    state.selected.push({ id: row.id.trim(), name: row.name });
+    renderSelected();
+    setStatus(`Đã thêm: ${row.name}`);
+  }
+}
+
+function removeIndex(index) {
+  const removed = state.selected.splice(index, 1)[0];
+  renderSelected();
+  setStatus(removed ? `Đã xóa: ${removed.name}` : 'Đã cập nhật lộ trình');
+}
+
+function setStatus(text) {
+  $('statusText').textContent = text;
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"]/g, s => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[s]));
+}
+
+function escapeAttr(value) {
+  return escapeHtml(value).replace(/'/g, '&#39;');
+}
+
+function highlight(text, query) {
+  return escapeHtml(text);
+}
+
+function sanitizeFileName(name) {
+  const clean = String(name || '').replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim();
+  return clean || 'Tối ưu lộ trình Trâm TV15.16.17 T7';
+}
+
+async function exportExcel() {
+  if (!window.ExcelJS) {
+    alert('Chưa tải được thư viện ExcelJS. Hãy mở trang khi có Internet rồi thử lại.');
+    return;
+  }
+  if (state.selected.length === 0) {
+    alert('Bạn chưa chọn địa điểm nào để xuất Excel.');
+    return;
+  }
+
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'Route Planner Mobile';
+  workbook.created = new Date();
+  workbook.modified = new Date();
+
+  const sheet = workbook.addWorksheet('SheetJS', {
+    views: [{ state: 'frozen', ySplit: 1 }]
+  });
+  sheet.columns = [
+    { header: 'id', key: 'id', width: 14 },
+    { header: 'name', key: 'name', width: 48 },
+    { header: 'address', key: 'address', width: 18 },
+    { header: 'note', key: 'note', width: 18 },
+    { header: 'quantity', key: 'quantity', width: 12 },
+    { header: 'priority', key: 'priority', width: 12 },
+    { header: 'evaluate', key: 'evaluate', width: 12 },
+    { header: 'action', key: 'action', width: 16 }
+  ];
+
+  state.selected.forEach(row => {
+    sheet.addRow({ id: row.id, name: row.name, address: '', note: '', quantity: '', priority: '', evaluate: '', action: '' });
+  });
+
+  applySheetStyle(sheet);
+
+  const sourceSheet = workbook.addWorksheet('Sheet1');
+  sourceSheet.columns = [
+    { key: 'id', width: 14 },
+    { key: 'name', width: 48 }
+  ];
+  SOURCE_ROWS.forEach(row => sourceSheet.addRow([row.id, row.name]));
+  sourceSheet.eachRow(row => {
+    row.height = 20;
+    row.eachCell(cell => {
+      cell.font = { name: 'Calibri', size: 11 };
+      cell.alignment = { vertical: 'middle' };
+    });
+  });
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const link = document.createElement('a');
+  const fileName = sanitizeFileName($('fileName').value).replace(/\.xlsx$/i, '') + '.xlsx';
+  link.href = URL.createObjectURL(blob);
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(link.href);
+  setStatus(`Đã xuất ${fileName}`);
+}
+
+function applySheetStyle(sheet) {
+  const header = sheet.getRow(1);
+  header.height = 22;
+  header.eachCell(cell => {
+    cell.font = { name: 'Calibri', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4472C4' } };
+    cell.alignment = { vertical: 'middle', horizontal: 'center' };
+    cell.border = {
+      top: { style: 'thin', color: { argb: 'FFD9E2F3' } },
+      left: { style: 'thin', color: { argb: 'FFD9E2F3' } },
+      bottom: { style: 'thin', color: { argb: 'FFD9E2F3' } },
+      right: { style: 'thin', color: { argb: 'FFD9E2F3' } }
+    };
+  });
+
+  sheet.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) return;
+    row.height = 20;
+    row.eachCell({ includeEmpty: true }, cell => {
+      cell.font = { name: 'Calibri', size: 11 };
+      cell.alignment = { vertical: 'middle', wrapText: true };
+      cell.border = {
+        top: { style: 'thin', color: { argb: 'FFE7E6E6' } },
+        left: { style: 'thin', color: { argb: 'FFE7E6E6' } },
+        bottom: { style: 'thin', color: { argb: 'FFE7E6E6' } },
+        right: { style: 'thin', color: { argb: 'FFE7E6E6' } }
+      };
+    });
+  });
+}
+
+$('searchInput').addEventListener('input', (event) => {
+  state.query = event.target.value;
+  $('resetSearchBtn').classList.toggle('hidden', !state.query);
+  renderClinics();
+});
+
+$('resetSearchBtn').addEventListener('click', () => {
+  $('searchInput').value = '';
+  state.query = '';
+  $('resetSearchBtn').classList.add('hidden');
+  renderClinics();
+  $('searchInput').focus();
+});
+
+$('clinicList').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-add]');
+  if (!button) return;
+  const [id, name] = button.dataset.add.split('|||');
+  addRow({ id, name });
+});
+
+$('selectedList').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-remove]');
+  if (!button) return;
+  removeIndex(Number(button.dataset.remove));
+});
+
+$('clearAllBtn').addEventListener('click', () => {
+  if (!state.selected.length) return;
+  if (confirm('Xóa toàn bộ lộ trình đã chọn?')) {
+    state.selected = [];
+    renderSelected();
+    setStatus('Đã xóa toàn bộ lộ trình.');
+  }
+});
+
+$('exportBtnTop').addEventListener('click', exportExcel);
+$('exportBtnBottom').addEventListener('click', exportExcel);
+
+if (window.Sortable) {
+  new Sortable($('selectedList'), {
+    animation: 150,
+    handle: '.drag-handle',
+    ghostClass: 'sortable-ghost',
+    chosenClass: 'sortable-chosen',
+    onEnd: (event) => {
+      if (event.oldIndex === event.newIndex) return;
+      const [moved] = state.selected.splice(event.oldIndex, 1);
+      state.selected.splice(event.newIndex, 0, moved);
+      renderSelected();
+      setStatus('Đã đổi thứ tự lộ trình.');
+    }
+  });
+}
+
+renderSelected();
+renderClinics();
+</script>
+</body>
+</html>
